@@ -52,9 +52,13 @@ async def get_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
         os.remove(mp3_file)
 
     except Exception as e:
+        print(f"XATO: {e}")
         await update.message.reply_text(
-            "❌ Musiqani topib bo‘lmadi. Boshqa nom yoki havola yuboring."
+            f"❌ Xatolik: {e}"
         )
+
+    
+        
 
 def main():
     app = Application.builder().token(TOKEN).build()
