@@ -1,15 +1,16 @@
 import os
-import asyncio
 import yt_dlp
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
 TOKEN = os.getenv("BOT_TOKEN")
 
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🎵 Salom! Musiqa nomini yoki YouTube/TikTok/Instagram havolasini yuboring."
     )
+
 
 async def get_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
@@ -23,6 +24,12 @@ async def get_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "outtmpl": filename,
         "noplaylist": True,
         "quiet": True,
+        "noprogress": True,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android"]
+            }
+        },
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
@@ -44,21 +51,23 @@ async def get_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         mp3_file = f"/tmp/{update.message.from_user.id}.mp3"
 
-        await update.message.reply_audio(
-            audio=open(mp3_file, "rb"),
-            title=title
-        )
+        if not os.path.exists(mp3_file):
+            raise Exception("MP3 fayl yaratilmadi")
+
+        with open(mp3_file, "rb") as audio:
+            await update.message.reply_audio(
+                audio=audio,
+                title=title
+            )
 
         os.remove(mp3_file)
 
     except Exception as e:
         print(f"XATO: {e}")
         await update.message.reply_text(
-            f"❌ Xatolik: {e}"
+            "❌ Musiqani topib bo‘lmadi. Boshqa nom yoki havola yuboring."
         )
 
-    
-        
 
 def main():
     app = Application.builder().token(TOKEN).build()
@@ -68,6 +77,7 @@ def main():
 
     print("Bot ishga tushdi...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
