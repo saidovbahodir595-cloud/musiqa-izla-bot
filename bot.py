@@ -3,7 +3,8 @@ import yt_dlp
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
-TOKEN = os.getenv("BOT_TOKEN")
+TOKEN = os.getenv("BOT_TOKEN")if not TOKEN:
+    raise ValueError("BOT_TOKEN topilmadi!")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
