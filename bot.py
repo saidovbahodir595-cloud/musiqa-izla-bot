@@ -43,7 +43,7 @@ async def get_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         if not query.startswith(("http://", "https://")):
-            query = "ytsearch1:" + query
+            query = "scsearch1:" + query
 
         with yt_dlp.YoutubeDL(options) as ydl:
             info = ydl.extract_info(query, download=True)
