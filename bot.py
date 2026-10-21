@@ -1,85 +1,55 @@
-import os
-import yt_dlp
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
+import os
+from urllib.parse import quote_plus
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
 
 TOKEN = os.getenv("BOT_TOKEN")
 
-if not TOKEN:raise ValueError("BOT_TOKEN topilmadi")
-
+if not TOKEN:
+    raise ValueError("BOT_TOKEN topilmadi")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎵 Salom! Musiqa nomini yoki YouTube/TikTok/Instagram havolasini yuboring."
+        "🎵 Salom! Musiqa nomini yuboring. "
+        "Men sizga qidiruv havolasini beraman."
     )
 
 
 async def get_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
 
-    await update.message.reply_text("🔎 Qidiryapman...")
+    if not query:
+        await update.message.reply_text("Musiqa nomini yozing.")
+        return
 
-    filename = f"/tmp/{update.message.from_user.id}.%(ext)s"
+    search_url = (
+        "https://www.youtube.com/results?search_query="
+        + quote_plus(query)
+    )
 
-    options = {
-        "format": "bestaudio/best",
-        "outtmpl": filename,
-        "noplaylist": True,
-        "quiet": True,
-        "noprogress": True,
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["android"]
-            }
-        },
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "192",
-        }],
-    }
-
-    try:
-        if not query.startswith(("http://", "https://")):
-            query = "ytsearch1:" + query
-
-        with yt_dlp.YoutubeDL(options) as ydl:
-            info = ydl.extract_info(query, download=True)
-
-            if "entries" in info:
-                info = info["entries"][0]
-
-            title = info.get("title", "Musiqa")
-
-        mp3_file = f"/tmp/{update.message.from_user.id}.mp3"
-
-        if not os.path.exists(mp3_file):
-            raise Exception("MP3 fayl yaratilmadi")
-
-        with open(mp3_file, "rb") as audio:
-            await update.message.reply_audio(
-                audio=audio,
-                title=title
-            )
-
-        os.remove(mp3_file)
-
-    except Exception as e:
-        print(f"XATO: {e}")
-        await update.message.reply_text(
-            "❌ Musiqani topib bo‘lmadi. Boshqa nom yoki havola yuboring."
-        )
+    await update.message.reply_text(
+        f"🎵 Qidiruv: {query}\n\n"
+        f"🔎 Musiqani shu yerdan toping:\n{search_url}"
+    )
 
 
 def main():
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, get_music))
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, get_music)
+    )
 
-    print("Bot ishga tushdi...")
+    print("MusiqaIzlaBot ishga tushdi!")
     app.run_polling()
 
 
