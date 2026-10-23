@@ -1,10 +1,11 @@
 
 import os
-import re
+import asyncio
 import tempfile
-import subprocess
+from pathlib import Path
 from urllib.parse import urlparse
 
+import yt_dlp
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -16,100 +17,113 @@ from telegram.ext import (
 
 TOKEN = os.getenv("BOT_TOKEN")
 
+if not TOKEN:
+    raise ValueError("BOT_TOKEN topilmadi")
+
+ALLOWED_DOMAINS = (
+    "youtube.com",
+    "youtu.be",
+    "instagram.com",
+    "tiktok.com",
+)
+
+
+def valid_url(url):
+    try:
+        host = (urlparse(url).hostname or "").lower()
+        return any(
+            host == domain or host.endswith("." + domain)
+            for domain in ALLOWED_DOMAINS
+        )
+    except ValueError:
+        return False
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎵 Salom!\n"
-        "MP3 ga aylantirish uchun to‘g‘ridan-to‘g‘ri audio havolasini yuboring.\n"
-        "Havola mp3, wav, m4a yoki boshqa audio faylga olib borishi kerak."
+        "🎵 Salom! Instagram Reels, TikTok yoki "
+        "YouTube havolasini yuboring.\n"
+        "Men ruxsatingiz bor videodan MP3 tayyorlashga urinaman."
     )
 
 
-async def get_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def get_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
 
-    if not re.match(r"^https?://", url, re.IGNORECASE):
+    if not valid_url(url):
         await update.message.reply_text(
-            "Iltimos, http:// yoki https:// bilan boshlanadigan audio havolasini yuboring."
+            "❌ Iltimos, Instagram, TikTok yoki "
+            "YouTube havolasini yuboring."
         )
         return
 
-    parsed = urlparse(url)
-    if not parsed.hostname:
-        await update.message.reply_text("Havola noto‘g‘ri ko‘rinadi.")
-        return
-
-    status = await update.message.reply_text("⏳ Audio tekshirilmoqda...")
+    status = await update.message.reply_text(
+        "⏳ Audio tayyorlanmoqda..."
+    )
 
     try:
-        with tempfile.TemporaryDirectory() as folder:
-            source = os.path.join(folder, "audio_input")
-            output = os.path.join(folder, "audio.mp3")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = str(Path(temp_dir) / "audio.%(ext)s")
 
-            # Faqat to'g'ridan-to'g'ri audio fayl havolalarini qabul qiladi.
-            import urllib.request
+            options = {
+                "format": "bestaudio/best",
+                "outtmpl": output,
+                "noplaylist": True,
+                "quiet": True,
+                "no_warnings": True,
+                "socket_timeout": 30,
+                "retries": 1,
+                "max_filesize": 45 * 1024 * 1024,
+                "postprocessors": [{
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                }],
+            }
 
-            request = urllib.request.Request(
-                url,
-                headers={"User-Agent": "MusiqaIzlaBot/1.0"},
-            )
+            def download():
+                with yt_dlp.YoutubeDL(options) as ydl:
+                    ydl.download([url])
 
-            with urllib.request.urlopen(request, timeout=25) as response:
-                content_type = response.headers.get("Content-Type", "").lower()
-                if not content_type.startswith("audio/"):
-                    await status.edit_text(
-                        "❌ Bu havola to‘g‘ridan-to‘g‘ri audio fayl emas.\n"
-                        "Audio faylning bevosita havolasini yuboring."
-                    )
-                    return
+            await asyncio.to_thread(download)
 
-                with open(source, "wb") as f:
-                    while True:
-                        chunk = response.read(64 * 1024)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        if f.tell() > 20 * 1024 * 1024:
-                            raise ValueError("Audio fayl 20 MB dan katta.")
+            files = list(Path(temp_dir).glob("audio.mp3"))
 
-            # FFmpeg serverda mavjud bo'lsa MP3 ga aylantiradi.
-            subprocess.run(
-                ["ffmpeg", "-y", "-i", source, "-vn", "-codec:a",
-                 "libmp3lame", "-b:a", "192k", output],
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=90,
-            )
+            if not files:
+                raise FileNotFoundError("MP3 fayl yaratilmagan")
 
-            with open(output, "rb") as audio:
+            audio = files[0]
+
+            with audio.open("rb") as file:
                 await update.message.reply_audio(
-                    audio=audio,
-                    filename="musiqa.mp3",
-                    title="MP3 audio",
+                    audio=file,
+                    title="Musiqa Izla MP3",
+                    caption="🎵 MP3 tayyor!"
                 )
 
             await status.delete()
 
-    except Exception:
+    except Exception as error:
+        print(f"Audio xatosi: {error}")
         await status.edit_text(
-            "❌ Audio tayyorlanmadi. Havola to‘g‘ridan-to‘g‘ri audio faylga "
-            "olib borishini tekshiring. Serverda FFmpeg ham o‘rnatilgan bo‘lishi kerak."
+            "❌ Audio olinmadi. Havola yopiq bo‘lishi "
+            "yoki sayt qo‘shimcha tasdiq talab qilishi mumkin. "
+            "Boshqa havolani sinab ko‘ring."
         )
 
 
 def main():
-    if not TOKEN:
-        raise ValueError("BOT_TOKEN topilmadi")
-
     app = Application.builder().token(TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, get_audio)
+        MessageHandler(filters.TEXT & ~filters.COMMAND, get_music)
     )
-    print("MusiqaIzlaBot ishga tushdi!")
+
+    print("Musiqa Izla bot ishga tushdi!")
     app.run_polling()
 
 
 if __name__ == "__main__":
     main()
+
