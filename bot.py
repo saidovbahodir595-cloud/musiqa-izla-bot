@@ -102,12 +102,17 @@ async def get_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await status.delete()
 
-    except Exception:
-        logging.exception("Musiqa yuklashda xatolik")
+    except Exception as e:
+    logging.exception("Musiqa yuklashda xatolik")
 
-        await status.edit_text(
-            "❌ Musiqani olishning imkoni bo‘lmadi.\n"
-            "Boshqa nom yoki ochiq havolani sinab ko‘ring."
+    await status.edit_text(
+        f"❌ Xatolik sababi:\n{str(e)[:700]}"
+        )
+        
+
+        
+            
+        
         )
 
 
