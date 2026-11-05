@@ -4,6 +4,7 @@ import asyncio
 import logging
 import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yt_dlp
 from telegram import Update
@@ -17,27 +18,39 @@ from telegram.ext import (
 
 TOKEN = os.getenv("BOT_TOKEN")
 
-if not TOKEN:
-    raise ValueError("BOT_TOKEN topilmadi")
-
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+if not TOKEN:
+    raise ValueError("BOT_TOKEN topilmadi!")
+
+def is_supported_url(text):
+    try:
+        host = urlparse(text).netloc.lower()
+        return (
+            host == "instagram.com"
+            or host.endswith(".instagram.com")
+            or host == "tiktok.com"
+            or host.endswith(".tiktok.com")
+            or host == "youtu.be"
+            or host.endswith(".youtube.com")
+        )
+    except Exception:
+        return False
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🎵 Salom! Musiqa Izla Botga xush kelibsiz!\n\n"
-        "Qo‘shiq nomini yoki audio havolasini yuboring.\n"
-        "Men MP3 tayyorlashga urinaman."
-    )
+def download_music(query, folder):
+    output = str(Path(folder) / "%(title).80s.%(ext)s")
 
-
-def download_audio(query, folder):
-    is_url = query.startswith(("http://", "https://"))
-    target = query if is_url else "ytsearch1:" + query
+    if is_supported_url(query):
+        source = query
+    else:
+        # Qo'shiq nomini SoundCloud'dan qidirish
+        source = "scsearch1:" + query
 
     options = {
         "format": "bestaudio/best",
-        "outtmpl": str(Path(folder) / "%(title).80s-%(id)s.%(ext)s"),
+        "outtmpl": output,
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
@@ -51,25 +64,24 @@ def download_audio(query, folder):
     }
 
     with yt_dlp.YoutubeDL(options) as ydl:
-        info = ydl.extract_info(target, download=True)
-
-        if info.get("entries"):
-            info = next(
-                (item for item in info["entries"] if item),
-                None
-            )
-
-        if not info:
-            raise Exception("Audio topilmadi")
-
-        title = info.get("title", "Musiqa")
+        ydl.download([source])
 
     files = list(Path(folder).glob("*.mp3"))
 
     if not files:
-        raise Exception("MP3 fayl tayyorlanmadi")
+        raise Exception("MP3 fayl tayyor bo'lmadi")
 
-    return files[0], title
+    return files[0]
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🎵 Salom! MusiqaIzlaBotga xush kelibsiz!\n\n"
+        "📥 Instagram havolasini yuboring.\n"
+        "📥 TikTok havolasini yuboring.\n"
+        "🔎 Yoki qo'shiq nomini yozing.\n\n"
+        "Men MP3 tayyorlashga harakat qilaman!"
+    )
 
 
 async def get_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -78,34 +90,48 @@ async def get_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not query:
         return
 
+    if len(query) > 1000:
+        await update.message.reply_text("❌ Matn juda uzun.")
+        return
+
+    if "://" in query and not is_supported_url(query):
+        await update.message.reply_text(
+            "❌ Hozircha Instagram, TikTok va YouTube havolalarini yuboring."
+        )
+        return
+
     status = await update.message.reply_text(
-        "🔎 Musiqani qidiryapman, biroz kuting..."
+        "🔎 Musiqa qidirilmoqda...\nIltimos, kuting."
     )
 
     try:
         with tempfile.TemporaryDirectory() as folder:
-            audio_path, title = await asyncio.to_thread(
-                download_audio, query, folder
+            audio = await asyncio.to_thread(
+                download_music, query, folder
             )
 
-            await status.edit_text("🎧 MP3 tayyor! Yuboryapman...")
+            if audio.stat().st_size > 45 * 1024 * 1024:
+                await status.edit_text(
+                    "❌ Fayl juda katta. Boshqa musiqa yuboring."
+                )
+                return
 
-            with open(audio_path, "rb") as audio:
+            await status.edit_text("🎵 MP3 tayyor! Yuborilmoqda...")
+
+            with audio.open("rb") as file:
                 await update.message.reply_audio(
-                    audio=audio,
-                    title=title[:64],
-                    filename="musiqa.mp3",
-                    read_timeout=120,
-                    write_timeout=120,
+                    audio=file,
+                    title=audio.stem[:64],
+                    caption="🎵 MusiqaIzlaBot"
                 )
 
             await status.delete()
 
-    except Exception as e:
-        logging.exception("Musiqa yuklashda xatolik")
-
+    except Exception as error:
+        logger.exception("Musiqa yuklashda xato: %s", error)
         await status.edit_text(
-            f"❌ Xatolik sababi:\n{str(e)[:700]}"
+            "❌ Musiqani topib yoki yuklab bo'lmadi.\n\n"
+            "Boshqa havola yoki qo'shiq nomini yuboring."
         )
 
 
@@ -113,13 +139,11 @@ def main():
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, get_music)
     )
 
-    print("Musiqa Izla Bot ishga tushdi!")
-
+    print("MusiqaIzlaBot ishga tushdi!")
     app.run_polling()
 
 
