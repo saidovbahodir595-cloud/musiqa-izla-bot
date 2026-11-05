@@ -33,7 +33,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def download_audio(query, folder):
     is_url = query.startswith(("http://", "https://"))
-
     target = query if is_url else "ytsearch1:" + query
 
     options = {
@@ -103,16 +102,10 @@ async def get_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await status.delete()
 
     except Exception as e:
-    logging.exception("Musiqa yuklashda xatolik")
+        logging.exception("Musiqa yuklashda xatolik")
 
-    await status.edit_text(
-        f"❌ Xatolik sababi:\n{str(e)[:700]}"
-        )
-        
-
-        
-            
-        
+        await status.edit_text(
+            f"❌ Xatolik sababi:\n{str(e)[:700]}"
         )
 
 
@@ -120,6 +113,7 @@ def main():
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, get_music)
     )
