@@ -22,6 +22,7 @@ from telegram.ext import (
 )
 
 TOKEN = os.getenv("BOT_TOKEN")
+PAGE_SIZE = 10
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -50,7 +51,10 @@ def search_songs(query):
     }
 
     with yt_dlp.YoutubeDL(options) as ydl:
-        info = ydl.extract_info("scsearch20:" + query, download=False)
+        info = ydl.extract_info(
+            "scsearch20:" + query,
+            download=False
+        )
 
     results = []
     seen = set()
@@ -66,6 +70,7 @@ def search_songs(query):
             continue
 
         seen.add(url)
+
         results.append({
             "title": title,
             "url": url,
@@ -104,23 +109,86 @@ def download_music(url, folder):
     return files[0]
 
 
-def make_keyboard(results, selected):
+def selection_text(results, selected, downloaded):
+    pending = selected - downloaded
+
+    return (
+        f"🎵 MUSIQA IZLA BOT\n\n"
+        f"🔎 Topilgan: {len(results)} ta qo'shiq\n"
+        f"☑️ Tanlangan: {len(selected)} ta\n"
+        f"📥 Yuklangan: {len(downloaded)} ta\n"
+        f"⏳ Navbatda: {len(pending)} ta\n\n"
+        f"Kerakli qo'shiqlarni belgilang.\n"
+        f"Yuklangan qo'shiqlar ro'yxatda qoladi!"
+    )
+
+
+def make_keyboard(results, selected, downloaded, page=0):
     rows = []
 
-    for i, song in enumerate(results):
-        mark = "✅" if i in selected else "⬜"
-        label = f"{mark} {i + 1}. {song['title'][:35]}"
+    total_pages = max(
+        1, (len(results) + PAGE_SIZE - 1) // PAGE_SIZE
+    )
+
+    page = max(0, min(page, total_pages - 1))
+
+    start = page * PAGE_SIZE
+    end = min(start + PAGE_SIZE, len(results))
+
+    for i in range(start, end):
+        song = results[i]
+
+        if i in downloaded:
+            mark = "📥"
+        elif i in selected:
+            mark = "✅"
+        else:
+            mark = "⬜"
+
+        title = song["title"][:38]
+
         rows.append([
             InlineKeyboardButton(
-                label,
+                f"{mark} {i + 1}. {title}",
                 callback_data=f"s:{i}"
             )
         ])
 
-    if selected:
+    # Sahifalarni almashtirish
+    navigation = []
+
+    if page > 0:
+        navigation.append(
+            InlineKeyboardButton(
+                "⬅️ Oldingi",
+                callback_data=f"p:{page - 1}"
+            )
+        )
+
+    navigation.append(
+        InlineKeyboardButton(
+            f"{page + 1}/{total_pages}",
+            callback_data="noop"
+        )
+    )
+
+    if page < total_pages - 1:
+        navigation.append(
+            InlineKeyboardButton(
+                "Keyingi ➡️",
+                callback_data=f"p:{page + 1}"
+            )
+        )
+
+    rows.append(navigation)
+
+    # Yuklab olish
+    pending = selected - downloaded
+
+    if pending:
         rows.append([
             InlineKeyboardButton(
-                f"🎵 Tanlanganlarni yuklash ({len(selected)})",
+                f"⬇️ Yuklab olish ({len(pending)} ta)",
                 callback_data="download"
             )
         ])
@@ -137,10 +205,12 @@ def make_keyboard(results, selected):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎵 Salom! MusiqaIzlaBotga xush kelibsiz!\n\n"
-        "🔎 Ijrochi yoki qo'shiq nomini yozing.\n"
-        "Men 20 tagacha qo'shiq topaman.\n\n"
-        "📥 Instagram yoki TikTok havolasini ham yuborishingiz mumkin."
+        "🎵 MUSIQA IZLA BOTGA XUSH KELIBSIZ!\n\n"
+        "🔎 Qo'shiq nomi yoki ijrochi ismini yozing.\n\n"
+        "🎶 Sizga 20 tagacha qo'shiq topaman.\n"
+        "☑️ Istaganingizcha qo'shiq tanlang.\n"
+        "📥 Bir nechta qo'shiqni ketma-ket yuklab oling.\n\n"
+        "📌 Instagram va TikTok havolalari ham ishlaydi."
     )
 
 
@@ -154,7 +224,9 @@ async def get_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Matn juda uzun.")
         return
 
-    status = await update.message.reply_text("🔎 Musiqa qidirilmoqda...")
+    status = await update.message.reply_text(
+        "🔎 Qo'shiqlar qidirilmoqda..."
+    )
 
     try:
         if is_supported_url(query):
@@ -171,7 +243,7 @@ async def get_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_audio(
                         audio=file,
                         title=audio.stem[:64],
-                        caption="🎵 MusiqaIzlaBot"
+                        caption="🎵 Musiqa Izla Bot"
                     )
 
             await status.delete()
@@ -179,32 +251,40 @@ async def get_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if "://" in query:
             await status.edit_text(
-                "❌ Hozircha Instagram va TikTok havolalarini yuboring."
+                "❌ Hozircha Instagram va TikTok "
+                "havolalarini yuboring."
             )
             return
 
-        results = await asyncio.to_thread(search_songs, query)
-
-        if not results:
-            await status.edit_text("❌ Qo'shiqlar topilmadi.")
-            return
-
-        context.user_data["songs"] = results
-        context.user_data["selected"] = set()
-
-        text = (
-            f"🎵 {len(results)} ta natija topildi!\n\n"
-            "Yoqtirgan qo'shiqlaringizni belgilang.\n"
-            "Istaganingizcha tanlashingiz mumkin."
+        results = await asyncio.to_thread(
+            search_songs, query
         )
 
+        if not results:
+            await status.edit_text(
+                "❌ Qo'shiqlar topilmadi."
+            )
+            return
+
+        # Yangi qidiruv uchun yangi ro'yxat
+        context.user_data["songs"] = results
+        context.user_data["selected"] = set()
+        context.user_data["downloaded"] = set()
+        context.user_data["page"] = 0
+
+        selected = context.user_data["selected"]
+        downloaded = context.user_data["downloaded"]
+
         await status.edit_text(
-            text,
-            reply_markup=make_keyboard(results, set())
+            selection_text(results, selected, downloaded),
+            reply_markup=make_keyboard(
+                results, selected, downloaded, 0
+            )
         )
 
     except Exception as error:
         logger.exception("Qidiruv xatosi: %s", error)
+
         await status.edit_text(
             "❌ Musiqani qidirishda xato yuz berdi.\n"
             "Boshqa nom bilan urinib ko'ring."
@@ -213,18 +293,38 @@ async def get_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
 
     results = context.user_data.get("songs", [])
     selected = context.user_data.get("selected", set())
+    downloaded = context.user_data.get("downloaded", set())
+    page = context.user_data.get("page", 0)
 
     if not results:
-        await query.edit_message_text(
-            "Qidiruv muddati tugadi. Iltimos, qo'shiq nomini qayta yozing."
+        await query.answer(
+            "Avval qo'shiq nomini yuboring!",
+            show_alert=True
         )
         return
 
+    # Sahifa almashtirish
+    if query.data.startswith("p:"):
+        await query.answer()
+
+        page = int(query.data.split(":")[1])
+        context.user_data["page"] = page
+
+        await query.edit_message_text(
+            selection_text(results, selected, downloaded),
+            reply_markup=make_keyboard(
+                results, selected, downloaded, page
+            )
+        )
+        return
+
+    # Raqamli qo'shiq tanlash
     if query.data.startswith("s:"):
+        await query.answer()
+
         index = int(query.data.split(":")[1])
 
         if index < 0 or index >= len(results):
@@ -232,44 +332,74 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if index in selected:
             selected.remove(index)
+            downloaded.discard(index)
         else:
             selected.add(index)
 
         context.user_data["selected"] = selected
-
-        await query.edit_message_reply_markup(
-            reply_markup=make_keyboard(results, selected)
-        )
-        return
-
-    if query.data == "clear":
-        selected.clear()
-        context.user_data["selected"] = selected
-
-        await query.edit_message_reply_markup(
-            reply_markup=make_keyboard(results, selected)
-        )
-        return
-
-    if query.data == "download":
-        if not selected:
-            await query.answer("Avval qo'shiq tanlang!", show_alert=True)
-            return
+        context.user_data["downloaded"] = downloaded
 
         await query.edit_message_text(
-            f"⏳ {len(selected)} ta qo'shiq tayyorlanmoqda..."
+            selection_text(results, selected, downloaded),
+            reply_markup=make_keyboard(
+                results, selected, downloaded, page
+            )
+        )
+        return
+
+    # Bo'sh sahifa raqami
+    if query.data == "noop":
+        await query.answer()
+        return
+
+    # Tanlovni tozalash
+    if query.data == "clear":
+        await query.answer()
+
+        selected.clear()
+        downloaded.clear()
+
+        context.user_data["selected"] = selected
+        context.user_data["downloaded"] = downloaded
+
+        await query.edit_message_text(
+            selection_text(results, selected, downloaded),
+            reply_markup=make_keyboard(
+                results, selected, downloaded, page
+            )
+        )
+        return
+
+    # Tanlangan qo'shiqlarni yuklab olish
+    if query.data == "download":
+        pending = sorted(selected - downloaded)
+
+        if not pending:
+            await query.answer(
+                "Yuklab olinadigan qo'shiq yo'q!",
+                show_alert=True
+            )
+            return
+
+        await query.answer()
+
+        await query.edit_message_text(
+            f"⏳ {len(pending)} ta qo'shiq yuklanmoqda...\n\n"
+            "Iltimos, kuting."
         )
 
         success = 0
         failed = 0
 
-        for index in sorted(selected):
+        for index in pending:
             song = results[index]
 
             try:
                 with tempfile.TemporaryDirectory() as folder:
                     audio = await asyncio.to_thread(
-                        download_music, song["url"], folder
+                        download_music,
+                        song["url"],
+                        folder
                     )
 
                     if audio.stat().st_size > 45 * 1024 * 1024:
@@ -281,26 +411,34 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             chat_id=query.message.chat_id,
                             audio=file,
                             title=song["title"][:64],
-                            caption="🎵 MusiqaIzlaBot"
+                            caption="🎵 Musiqa Izla Bot"
                         )
 
                 success += 1
 
+                # Yuklanganini belgilash
+                downloaded.add(index)
+                context.user_data["downloaded"] = downloaded
+
             except Exception as error:
                 logger.warning(
                     "Yuklash xatosi: %s | %s",
-                    song["title"], error
+                    song["title"],
+                    error
                 )
                 failed += 1
 
-        context.user_data.pop("songs", None)
-        context.user_data.pop("selected", None)
-
+        # MUHIM: songs va selected o'chirilmaydi!
         await query.edit_message_text(
-            f"✅ Tayyor!\n\n"
-            f"Yuklandi: {success} ta\n"
-            f"Xatolik: {failed} ta\n\n"
-            f"Yana musiqa izlash uchun qo'shiq nomini yozing."
+            f"✅ YUKLASH YAKUNLANDI!\n\n"
+            f"📥 Muvaffaqiyatli: {success} ta\n"
+            f"❌ Xatolik: {failed} ta\n\n"
+            f"☑️ Tanlangan: {len(selected)} ta\n"
+            f"📥 Jami yuklangan: {len(downloaded)} ta\n\n"
+            f"Qolgan qo'shiqlarni ham yuklashingiz mumkin!",
+            reply_markup=make_keyboard(
+                results, selected, downloaded, page
+            )
         )
 
 
@@ -311,12 +449,20 @@ def main():
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, get_music)
-    )
-    app.add_handler(CallbackQueryHandler(buttons))
 
-    print("MusiqaIzlaBot ishga tushdi!")
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            get_music
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(buttons)
+    )
+
+    print("Musiqa Izla Bot ishga tushdi!")
+
     app.run_polling()
 
 
